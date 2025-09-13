@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 224 71% 4%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 224 71% 4%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 217.2 91.2% 59.8%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  }
+}
+
+body {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%,rgba(120,119,198,0.3), transparent),
+              radial-gradient(ellipse 80% 50% at 50% 120%,rgba(120,119,198,0.3), transparent),
+              #0A0A10;
+  min-height: 100vh;
+}
+
+.glass-effect {
+  background: rgba(22, 27, 44, 0.6);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.platform-steam {
+  @apply bg-blue-600 text-white;
+}
+
+.platform-xbox {
+  @apply bg-green-600 text-white;
+}
+
+.platform-wow {
+  @apply bg-yellow-500 text-black;
+}
+
+.platform-riot {
+  @apply bg-red-600 text-white;
+}
+
+.achievement-rare {
+  @apply bg-gradient-to-r from-purple-500 to-pink-500;
+}
+
+.achievement-common {
+  @apply bg-gradient-to-r from-gray-600 to-gray-700;
+}
+
+.meta-trophy {
+  @apply bg-gradient-to-r from-yellow-400 to-orange-500;
+}
+
+.animated-gradient-text {
+    background-image: linear-gradient(90deg, #6366f1, #a855f7, #ec4899, #6366f1);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: gradient-animation 5s linear infinite;
+}
+
+@keyframes gradient-animation {
+    0% {
+        background-position: 0% 50%;
+    }
+    100% {
+        background-position: 200% 50%;
+    }
+}
