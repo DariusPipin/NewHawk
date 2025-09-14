@@ -15,10 +15,7 @@ import {
 } from "@/components/ui/select";
 
 /**
- * Shapes a row from `player_stats` into the fields the new UI charts expect.
- * The DB has: achievements_unlocked, achievements_total, completion(0..1), etc.
- * The charts expect: totalAchievements, gamerscore, rareCount, metaTrophies,
- * completion (0..100), wins, losses, plus id/username/avatar/platforms.
+ * Shape a row from `player_stats` into the fields the UI charts expect.
  */
 function normalizeRow(row) {
   const completionPct = Math.round(Number(row?.completion || 0) * 100);
@@ -29,15 +26,17 @@ function normalizeRow(row) {
     username: row.username || "Player",
     avatar: row.avatar_url || "",
     platforms: row.steamid ? ["Steam"] : [],
+
+    // fields used by CompareMatrix/CompareGraphs
     totalAchievements: unlocked,
     gamerscore: unlocked,          // Steam proxy
-    rareCount: 0,                  // not tracked in this table
-    metaTrophies: 0,               // not tracked in this table
+    rareCount: 0,                  // not tracked in table
+    metaTrophies: 0,               // not tracked in table
     completion: completionPct,     // 0..100 for charts
-    wins: 0,                       // optional; not tracked → default 0
-    losses: 0,                     // optional; not tracked → default 0
+    wins: 0,                       // optional
+    losses: 0,                     // optional
 
-    // keep a few raw fields if you want to show them elsewhere
+    // raw extras (not required by charts)
     games_count: Number(row?.games_count || 0),
     achievements_total: Number(row?.achievements_total || 0),
     playtime_total: Number(row?.playtime_total || 0),
@@ -214,9 +213,10 @@ const Compare = () => {
           animate={{ opacity: 1, y: 0 }}
           className="lg:col-span-8"
         >
-          <div className="glass-effect rounded-xl p-6 min-h-[400px] flex flex-col">
+          {/* Bigger stage so the radar looks like the mock */}
+          <div className="glass-effect rounded-xl p-8 min-h-[560px] flex flex-col">
             {/* selected avatars */}
-            <div className="flex justify-center items-start gap-4 relative mb-4">
+            <div className="flex justify-center items-start gap-4 relative mb-6">
               <AnimatePresence>
                 {selectedUsers.map((u) => (
                   <motion.div
@@ -284,7 +284,7 @@ const Compare = () => {
                     <SelectValue placeholder="Filter by game" />
                   </SelectTrigger>
                   <SelectContent>
-                    {mockGames.map((g) => (
+                    {["all", "Cyberpunk 2077", "Elden Ring", "VALORANT"].map((g) => (
                       <SelectItem key={g} value={g}>
                         {g === "all" ? "All Games" : g}
                       </SelectItem>
@@ -314,7 +314,6 @@ const Compare = () => {
                   exit={{ opacity: 0, y: 20 }}
                   className="flex-grow space-y-8"
                 >
-                  <CompareMatrix users={selectedUsers} gameFilter={gameFilter} />
                   <CompareGraphs users={selectedUsers} gameFilter={gameFilter} />
                 </motion.div>
               )}
