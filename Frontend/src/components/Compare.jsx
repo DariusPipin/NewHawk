@@ -1,124 +1,325 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Users, Plus, X, Trophy, Star, Zap, Search } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { useToast } from '@/components/ui/use-toast';
-import CompareMatrix from '@/components/CompareMatrix';
+import React, { useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Users, Plus, X, Gamepad2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
+import { supabase } from "@/lib/supabaseClient";
+import CompareMatrix from "@/components/CompareMatrix";
+import CompareGraphs from "@/components/CompareGraphs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+/**
+ * Shapes a row from `player_stats` into the fields the new UI charts expect.
+ * The DB has: achievements_unlocked, achievements_total, completion(0..1), etc.
+ * The charts expect: totalAchievements, gamerscore, rareCount, metaTrophies,
+ * completion (0..100), wins, losses, plus id/username/avatar/platforms.
+ */
+function normalizeRow(row) {
+  const completionPct = Math.round(Number(row?.completion || 0) * 100);
+  const unlocked = Number(row?.achievements_unlocked || 0);
+
+  return {
+    id: row.user_id,
+    username: row.username || "Player",
+    avatar: row.avatar_url || "",
+    platforms: row.steamid ? ["Steam"] : [],
+    totalAchievements: unlocked,
+    gamerscore: unlocked,          // Steam proxy
+    rareCount: 0,                  // not tracked in this table
+    metaTrophies: 0,               // not tracked in this table
+    completion: completionPct,     // 0..100 for charts
+    wins: 0,                       // optional; not tracked → default 0
+    losses: 0,                     // optional; not tracked → default 0
+
+    // keep a few raw fields if you want to show them elsewhere
+    games_count: Number(row?.games_count || 0),
+    achievements_total: Number(row?.achievements_total || 0),
+    playtime_total: Number(row?.playtime_total || 0),
+    updated_at: row.updated_at,
+  };
+}
 
 const Compare = () => {
-  const [selectedUsers, setSelectedUsers] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
   const { toast } = useToast();
 
-  const mockUsers = [
-    { id: 1, username: 'GamerPro2024', avatar: 'Gaming enthusiast with headset', totalAchievements: 1247, gamerscore: 45230, rareCount: 89, platforms: ['Steam', 'Xbox', 'WoW'] },
-    { id: 2, username: 'AchievementHunter', avatar: 'Trophy collector avatar', totalAchievements: 2156, gamerscore: 67890, rareCount: 156, platforms: ['Steam', 'Xbox', 'Riot'] },
-    { id: 3, username: 'CasualGamer', avatar: 'Relaxed gamer with controller', totalAchievements: 567, gamerscore: 23450, rareCount: 34, platforms: ['Xbox', 'WoW'] },
-    { id: 4, username: 'CompetitivePlayer', avatar: 'Esports player in action', totalAchievements: 1834, gamerscore: 56780, rareCount: 123, platforms: ['Steam', 'Riot'] },
-    { id: 5, username: 'RaidLeader', avatar: 'Fantasy warrior avatar', totalAchievements: 2500, gamerscore: 75000, rareCount: 200, platforms: ['WoW', 'Steam'] },
-    { id: 6, username: 'SoloQueueHero', avatar: 'Cyberpunk style character', totalAchievements: 980, gamerscore: 32000, rareCount: 50, platforms: ['Riot'] },
-  ];
+  const [searchTerm, setSearchTerm] = useState("");
+  const [gameFilter, setGameFilter] = useState("all");
+  const [loading, setLoading] = useState(true);
 
-  const filteredUsers = mockUsers.filter(user =>
-    user.username.toLowerCase().includes(searchTerm.toLowerCase()) &&
-    !selectedUsers.find(selected => selected.id === user.id)
-  );
+  const [allPlayers, setAllPlayers] = useState([]);        // raw rows
+  const [selectedUsers, setSelectedUsers] = useState([]);  // normalized users
 
-  const addUser = (user) => {
+  // Load players from DB once
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        const { data, error } = await supabase
+          .from("player_stats")
+          .select(
+            "user_id, username, avatar_url, steamid, games_count, achievements_unlocked, achievements_total, completion, playtime_total, updated_at"
+          )
+          .order("achievements_unlocked", { ascending: false })
+          .limit(200);
+
+        if (error) throw error;
+        setAllPlayers(data || []);
+      } catch (e) {
+        console.error(e);
+        toast({
+          title: "Failed to load players",
+          description: String(e.message || e),
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [toast]);
+
+  // Filter left-hand list (exclude already selected)
+  const filteredUsers = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    const picked = new Set(selectedUsers.map((u) => u.id));
+    return (allPlayers || [])
+      .filter((u) =>
+        term ? (u.username || "Player").toLowerCase().includes(term) : true
+      )
+      .filter((u) => !picked.has(u.user_id));
+  }, [allPlayers, searchTerm, selectedUsers]);
+
+  const addUser = (row) => {
     if (selectedUsers.length >= 4) {
-      toast({ title: "Maximum Reached", description: "You can compare up to 4 users at once.", variant: "destructive" });
+      toast({
+        title: "Maximum Reached",
+        description: "You can compare up to 4 users at once.",
+        variant: "destructive",
+      });
       return;
     }
-    setSelectedUsers([...selectedUsers, user]);
+    setSelectedUsers((s) => [...s, normalizeRow(row)]);
+    setSearchTerm("");
   };
 
   const removeUser = (userId) => {
-    setSelectedUsers(selectedUsers.filter(user => user.id !== userId));
+    setSelectedUsers((s) => s.filter((u) => u.id !== userId));
   };
-  
-  const getPlatformClass = (platform) => `platform-${platform.toLowerCase()}`;
+
+  const getPlatformDotClass = (p) => {
+    const k = p.toLowerCase();
+    if (k.includes("steam")) return "bg-blue-500";
+    if (k.includes("xbox")) return "bg-green-500";
+    if (k.includes("riot")) return "bg-red-500";
+    if (k.includes("wow")) return "bg-yellow-500";
+    return "bg-gray-500";
+  };
+
+  const mockGames = ["all", "Cyberpunk 2077", "Elden Ring", "VALORANT"];
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-5xl font-bold animated-gradient-text mb-2">Compare Players</h1>
-        <p className="text-gray-400 text-lg">See how you stack up against the competition.</p>
+      <div className="space-y-4">
+        <h1 className="text-5xl font-bold animated-gradient-text">Player Showdown</h1>
+        <p className="text-muted-foreground text-lg">
+          Who will claim the ultimate bragging rights?
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="lg:col-span-1 space-y-8">
-          <div className="glass-effect rounded-xl p-6">
-            <h3 className="text-xl font-semibold mb-4 flex items-center"><Users className="h-5 w-5 mr-2 text-blue-400" />Add Players</h3>
-            <div className="relative mb-4">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input type="text" placeholder="Search players..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* Left: search & add */}
+        <motion.div
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="lg:col-span-4"
+        >
+          <div className="glass-effect rounded-xl p-6 space-y-4">
+            <h3 className="text-xl font-semibold flex items-center">
+              <Users className="h-5 w-5 mr-2 text-primary" /> Add Challengers
+            </h3>
+
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search players..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full px-4 py-2 bg-background/50 border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              />
             </div>
-            <div className="space-y-3 max-h-[450px] overflow-y-auto pr-2">
-              {filteredUsers.map((user) => (
-                <motion.div
-                  key={user.id} layout
-                  initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
-                  className="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
-                >
-                  <div className="flex items-center space-x-3">
-                    <img alt={user.avatar} className="w-10 h-10 rounded-full object-cover" src="https://images.unsplash.com/photo-1588990779542-ddd8b7b07476" />
-                    <div>
-                      <div className="font-semibold text-white">{user.username}</div>
-                      <div className="text-xs text-gray-400">{user.totalAchievements} achievements</div>
-                    </div>
+
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+              <AnimatePresence>
+                {loading ? (
+                  Array.from({ length: 6 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="h-12 rounded-lg bg-white/5 border border-white/10 animate-pulse"
+                    />
+                  ))
+                ) : filteredUsers.length === 0 ? (
+                  <div className="text-sm text-muted-foreground px-2 py-6 text-center">
+                    No players found.
                   </div>
-                  <Button size="icon" onClick={() => addUser(user)} className="bg-blue-600 hover:bg-blue-700 h-8 w-8 shrink-0"><Plus className="h-4 w-4" /></Button>
-                </motion.div>
-              ))}
+                ) : (
+                  filteredUsers.map((row) => (
+                    <motion.div
+                      key={row.user_id}
+                      layout
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, x: -10 }}
+                      className="flex items-center justify-between p-2 bg-background/30 rounded-lg hover:bg-background/70 transition-colors"
+                    >
+                      <div className="flex items-center space-x-3 overflow-hidden">
+                        {row.avatar_url ? (
+                          <img
+                            alt=""
+                            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                            src={row.avatar_url}
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-white/10" />
+                        )}
+                        <p
+                          className="font-semibold text-foreground truncate"
+                          title={row.username || "Player"}
+                        >
+                          {row.username || "Player"}
+                        </p>
+                      </div>
+                      <Button
+                        size="icon"
+                        onClick={() => addUser(row)}
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground h-8 w-8 flex-shrink-0"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </motion.div>
+                  ))
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </motion.div>
 
-        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="lg:col-span-2">
-          {selectedUsers.length === 0 ? (
-            <div className="glass-effect rounded-xl p-12 text-center flex flex-col items-center justify-center min-h-[500px]">
-              <Users className="h-20 w-20 text-gray-500 mb-6" />
-              <h3 className="text-2xl font-bold text-gray-300 mb-2">Select Players to Compare</h3>
-              <p className="text-gray-400 max-w-sm">Add up to 4 players from the list on the left to see a detailed comparison of their gaming stats.</p>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <div className="glass-effect rounded-xl p-6">
-                <h3 className="text-xl font-semibold mb-4">Selected Players ({selectedUsers.length}/4)</h3>
-                <motion.div layout className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {selectedUsers.map((user) => (
-                    <motion.div layout key={user.id} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="bg-white/5 rounded-lg p-4 relative group">
-                      <Button size="icon" variant="destructive" onClick={() => removeUser(user.id)} className="absolute top-2 right-2 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"><X className="h-4 w-4" /></Button>
-                      <div className="flex items-center space-x-4 mb-4">
-                        <img alt={user.avatar} className="w-12 h-12 rounded-full object-cover" src="https://images.unsplash.com/photo-1588990779542-ddd8b7b07476" />
-                        <div>
-                          <div className="font-bold text-white text-lg">{user.username}</div>
-                          <div className="flex space-x-1 mt-1">
-                            {user.platforms.map(platform => (<div key={platform} title={platform} className={`w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center ${getPlatformClass(platform)}`}>{platform[0]}</div>))}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 text-center">
-                        <div>
-                          <div className="text-xl font-bold text-blue-400">{user.totalAchievements}</div>
-                          <div className="text-xs text-gray-400">Unlocks</div>
-                        </div>
-                        <div>
-                          <div className="text-xl font-bold text-green-400">{user.gamerscore.toLocaleString()}</div>
-                          <div className="text-xs text-gray-400">Score</div>
-                        </div>
-                        <div>
-                          <div className="text-xl font-bold text-purple-400">{user.rareCount}</div>
-                          <div className="text-xs text-gray-400">Rare</div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
+        {/* Right: selections + charts */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="lg:col-span-8"
+        >
+          <div className="glass-effect rounded-xl p-6 min-h-[400px] flex flex-col">
+            {/* selected avatars */}
+            <div className="flex justify-center items-start gap-4 relative mb-4">
+              <AnimatePresence>
+                {selectedUsers.map((u) => (
+                  <motion.div
+                    key={u.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.5 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.5 }}
+                    transition={{ type: "spring", stiffness: 200, damping: 20 }}
+                    className="relative flex flex-col items-center group w-24"
+                  >
+                    {u.avatar ? (
+                      <img
+                        alt=""
+                        className="w-20 h-20 md:w-24 md:h-24 rounded-full object-cover border-4 border-border ring-4 ring-transparent group-hover:ring-primary transition-all"
+                        src={u.avatar}
+                      />
+                    ) : (
+                      <div className="w-20 h-20 md:w-24 md:h-24 rounded-full border-4 border-border bg-white/5" />
+                    )}
+                    <p className="font-bold text-foreground mt-2 text-center w-full truncate">
+                      {u.username}
+                    </p>
+                    <div className="flex space-x-1 mt-1">
+                      {u.platforms.map((p) => (
+                        <div
+                          key={p}
+                          title={p}
+                          className={`w-3 h-3 rounded-full ${getPlatformDotClass(p)}`}
+                        />
+                      ))}
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="destructive"
+                      onClick={() => removeUser(u.id)}
+                      className="absolute -top-2 -right-2 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+              {selectedUsers.length > 0 && selectedUsers.length < 2 && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="flex flex-col items-center text-muted-foreground"
+                >
+                  <div className="w-20 h-20 md:w-24 md:h-24 rounded-full border-4 border-dashed border-border flex items-center justify-center">
+                    <Plus className="h-8 w-8" />
+                  </div>
+                  <p className="font-bold mt-2">Add Player</p>
                 </motion.div>
-              </div>
-              {selectedUsers.length >= 2 && <CompareMatrix users={selectedUsers} />}
+              )}
             </div>
-          )}
+
+            {/* game filter */}
+            {selectedUsers.length >= 2 && (
+              <div className="flex justify-center mb-6">
+                <Select value={gameFilter} onValueChange={setGameFilter}>
+                  <SelectTrigger className="w-[280px] bg-background/50 border-border">
+                    <Gamepad2 className="h-4 w-4 mr-2" />
+                    <SelectValue placeholder="Filter by game" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {mockGames.map((g) => (
+                      <SelectItem key={g} value={g}>
+                        {g === "all" ? "All Games" : g}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* empty state */}
+            {selectedUsers.length < 2 && (
+              <div className="flex-grow flex flex-col items-center justify-center text-center text-muted-foreground">
+                <Users className="h-16 w-16 mb-4" />
+                <h3 className="text-xl font-semibold text-foreground">
+                  Select players to begin
+                </h3>
+                <p>Add 2 to 4 players for a full comparison.</p>
+              </div>
+            )}
+
+            {/* charts */}
+            <AnimatePresence>
+              {selectedUsers.length >= 2 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 20 }}
+                  className="flex-grow space-y-8"
+                >
+                  <CompareMatrix users={selectedUsers} gameFilter={gameFilter} />
+                  <CompareGraphs users={selectedUsers} gameFilter={gameFilter} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </motion.div>
       </div>
     </div>

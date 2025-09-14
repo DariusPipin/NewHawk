@@ -43,7 +43,7 @@ const Profile = ({ onCreateProfile }) => {
           </motion.div>
           
           <h1 className="text-5xl font-bold animated-gradient-text mb-2">
-            Welcome to OmniGamer
+            Welcome to UGAB
           </h1>
           <p className="text-gray-400 text-lg">
             Create your profile to unify your gaming legacy.

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Helmet } from 'react-helmet';
+import { Helmet } from 'react-helmet-async';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/components/ui/use-toast';
@@ -13,6 +13,8 @@ import Profile from '@/components/Profile';
 import Wrapped from '@/components/Wrapped';
 import LinkAccounts from '@/components/LinkAccounts';
 import Settings from '@/components/Settings';
+import CustomAchievements from '@/components/CustomAchievements';
+import Achievements from '@/components/Achievements';
 
 import AuthGate from '@/components/AuthGate';
 import UserMenu from '@/components/UserMenu';
@@ -21,6 +23,10 @@ import { useAuth } from '@/contexts/AuthContext';
 function App() {
   const { user: authUser } = useAuth(); // Supabase auth user
   const [currentPage, setCurrentPage] = useState('dashboard');
+
+  // NEW: filters + pageKey to force re-mount when filters/page change
+  const [pageFilters, setPageFilters] = useState({});
+  const [pageKey, setPageKey] = useState(Date.now());
 
   // Optional in-app profile separate from Supabase user
   const [profileUser, setProfileUser] = useState(null);
@@ -76,21 +82,41 @@ function App() {
     });
   };
 
+  // NEW: navigateTo helper so other pages (e.g., Dashboard) can open Achievements with filters
+  const navigateTo = (page, filters = {}) => {
+    setPageFilters(filters);
+    setCurrentPage(page);
+    setPageKey(Date.now()); // force re-mount on page/filter changes
+  };
+
+  // NEW: wrap setCurrentPage to clear filters when leaving Achievements
+  const handleSetCurrentPage = (page) => {
+    if (currentPage === 'achievements' && page !== 'achievements') {
+      setPageFilters({});
+    }
+    setCurrentPage(page);
+    setPageKey(Date.now());
+  };
+
   const renderPage = () => {
     // Require local profile after Supabase auth
     if (!profileUser) return <Profile onCreateProfile={handleCreateProfile} />;
 
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard user={profileUser} linkedAccounts={linkedAccounts} />;
+        return <Dashboard user={profileUser} linkedAccounts={linkedAccounts} navigateTo={navigateTo} />;
       case 'games':
         return <Games user={profileUser} linkedAccounts={linkedAccounts} />;
+      case 'achievements':
+        return <Achievements initialFilters={pageFilters} />;
       case 'compare':
         return <Compare user={profileUser} />;
       case 'leaderboard':
         return <Leaderboard />;
       case 'wrapped':
         return <Wrapped user={profileUser} linkedAccounts={linkedAccounts} />;
+      case 'custom-achievements':
+        return <CustomAchievements user={profileUser} />;
       case 'link-accounts':
         return (
           <LinkAccounts
@@ -102,14 +128,14 @@ function App() {
       case 'settings':
         return <Settings user={profileUser} />;
       default:
-        return <Dashboard user={profileUser} linkedAccounts={linkedAccounts} />;
+        return <Dashboard user={profileUser} linkedAccounts={linkedAccounts} navigateTo={navigateTo} />;
     }
   };
 
   return (
     <>
       <Helmet>
-        <title>OmniGamer - Unified Gaming Dashboard</title>
+        <title>UGAB - Unified Gaming Dashboard</title>
         <meta
           name="description"
           content="Track your gaming achievements across Steam, Xbox, WoW, and Riot Games in one unified dashboard."
@@ -123,7 +149,7 @@ function App() {
           {authUser && profileUser && (
             <Sidebar
               currentPage={currentPage}
-              setCurrentPage={setCurrentPage}
+              setCurrentPage={handleSetCurrentPage} // use wrapped setter
               user={{ ...profileUser, username }}
               linkedAccounts={linkedAccounts}
             />
@@ -139,7 +165,7 @@ function App() {
 
             <AnimatePresence mode="wait">
               <motion.div
-                key={currentPage}
+                key={pageKey} // re-mount on page or filter changes
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}

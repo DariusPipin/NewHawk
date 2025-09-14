@@ -5,10 +5,10 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '@/lib/supabaseClient';
 
-/* ---------- config + utils ---------- */
 const FUNCTION_SLUG = import.meta.env.VITE_FUNCTION_SLUG || 'hyper-service';
-const AUTH_SLUG = import.meta.env.VITE_STEAM_AUTH_SLUG || 'smart-action';
+const AUTH_SLUG     = import.meta.env.VITE_STEAM_AUTH_SLUG || 'smart-action';
 
+/* ---------- helpers ---------- */
 function functionsBase() {
   const manual = import.meta.env.VITE_SUPABASE_FUNCTION_URL;
   if (manual) return manual.replace(/\/+$/, '');
@@ -17,13 +17,10 @@ function functionsBase() {
 }
 function relFromEpoch(sec){
   if(!sec) return 'never';
-  const d=Date.now()-sec*1000;
-  const m=Math.floor(d/60000);
-  if(m<60)return `${m} min${m!==1?'s':''} ago`;
-  const h=Math.floor(m/60);
-  if(h<24)return `${h} hour${h!==1?'s':''} ago`;
-  const days=Math.floor(h/24);
-  return `${days} day${days!==1?'s':''} ago`;
+  const d=Date.now()-sec*1000, m=Math.floor(d/60000);
+  if(m<60) return `${m} min${m!==1?'s':''} ago`;
+  const h=Math.floor(m/60); if(h<24) return `${h} hour${h!==1?'s':''} ago`;
+  const days=Math.floor(h/24); return `${days} day${days!==1?'s':''} ago`;
 }
 function SteamImage({ appid, iconHash, logoHash, alt, className }) {
   const base = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}`;
@@ -38,21 +35,30 @@ function SteamImage({ appid, iconHash, logoHash, alt, className }) {
     'https://images.unsplash.com/photo-1579373903781-fd5c0c30c4cd'
   ].filter(Boolean);
   const [i,setI]=useState(0);
-  return <img alt={alt} className={className} src={list[i]} onError={()=>setI(v=>Math.min(v+1,list.length-1))} loading="lazy" decoding="async"/>;
+  return (
+    <img
+      alt={alt}
+      className={className}
+      src={list[i]}
+      onError={()=>setI(v=>Math.min(v+1,list.length-1))}
+      loading="lazy"
+      decoding="async"
+    />
+  );
 }
 const cardVariants={ hidden:{opacity:0,y:20}, visible:i=>({opacity:1,y:0,transition:{delay:i*0.05,type:'spring',stiffness:100}}) };
 
-/* ---------- data fetchers ---------- */
+/* ---------- data ---------- */
 async function fetchGamesViaInvoke(steamid) {
   const { data, error } = await supabase.functions.invoke(FUNCTION_SLUG, {
-    body: { endpoint:'games-achievements', steamid, playedOnly:true, max:200, concurrency:5 }
+    body: { endpoint:'games-achievements', steamid, playedOnly:true, max:200, concurrency:5, detail:true }
   });
   if (error) throw error;
   return data;
 }
 async function fetchGamesViaFetch(steamid) {
   const base = functionsBase();
-  const url = `${base}/${FUNCTION_SLUG}?endpoint=games-achievements&steamid=${encodeURIComponent(steamid)}&playedOnly=true&max=200&concurrency=5`;
+  const url = `${base}/${FUNCTION_SLUG}?endpoint=games-achievements&steamid=${encodeURIComponent(steamid)}&playedOnly=true&max=200&concurrency=5&detail=true`;
   const r = await fetch(url);
   const t = await r.text();
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${t}`);
@@ -73,7 +79,8 @@ function shapeGames(payload){
       lastPlayed: relFromEpoch(g.rtime_last_played),
       lastPlayedEpoch: g.rtime_last_played ?? 0,
       iconHash: g.img_icon_url || null,
-      logoHash: g.img_logo_url || null
+      logoHash: g.img_logo_url || null,
+      playtime: g.playtime_forever ?? 0,
     };
   });
 }
@@ -89,7 +96,6 @@ export default function Games(){
   const [sortBy,setSortBy]=useState('recent');
   const [viewMode,setViewMode]=useState('grid');
 
-  /* always run hooks */
   const platforms = useMemo(()=>['all', ...new Set(games.map(g=>g.platform))],[games]);
   const filteredSorted = useMemo(()=>{
     const term=searchTerm.trim().toLowerCase();
@@ -102,7 +108,7 @@ export default function Games(){
 
   const nsKey = (uid) => `steamid:${uid || 'anon'}`;
 
-  // Handle Steam OpenID callback and persist steamid per Supabase user
+  // Handle Steam OpenID callback and persist SteamID
   useEffect(()=>{
     (async () => {
       const url=new URL(window.location.href);
@@ -110,8 +116,7 @@ export default function Games(){
       const status=url.searchParams.get('status');
       const state=url.searchParams.get('state');
       const expect=sessionStorage.getItem('steam_state')||'';
-
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data:{ user } } = await supabase.auth.getUser();
 
       if(status){
         if(status==='ok' && sid && (!expect || expect===state)){
@@ -119,7 +124,6 @@ export default function Games(){
             try { await supabase.auth.updateUser({ data: { steamid: sid } }); } catch {}
             localStorage.setItem(nsKey(user.id), sid);
           } else {
-            // namespace anonymous in this browser
             let anon = localStorage.getItem('anon_id');
             if (!anon) { anon = crypto.randomUUID(); localStorage.setItem('anon_id', anon); }
             localStorage.setItem(nsKey(anon), sid);
@@ -133,14 +137,10 @@ export default function Games(){
         return;
       }
 
-      // No return params: load from auth metadata or namespaced storage
-      if (user?.user_metadata?.steamid) {
-        setSteamId(user.user_metadata.steamid);
-        return;
-      }
-      if (user) {
+      if (user?.user_metadata?.steamid) setSteamId(user.user_metadata.steamid);
+      else if (user) {
         const saved = localStorage.getItem(nsKey(user.id)) || '';
-        if (saved) setSteamId(saved); else setSteamId('');
+        setSteamId(saved || '');
       } else {
         const anon = localStorage.getItem('anon_id') || '';
         const saved = anon ? localStorage.getItem(nsKey(anon)) : '';
@@ -149,7 +149,7 @@ export default function Games(){
     })();
   },[toast]);
 
-  // Fetch after we have steamId with invoke() then fetch() fallback
+  // Fetch Steam data and upsert aggregate leaderboard row with Steam avatar/persona
   useEffect(()=>{
     if(!steamId) { setLoading(false); return; }
     (async()=>{
@@ -158,7 +158,45 @@ export default function Games(){
         let payload;
         try { payload = await fetchGamesViaInvoke(steamId); }
         catch { payload = await fetchGamesViaFetch(steamId); }
-        setGames(shapeGames(payload));
+        const shaped = shapeGames(payload);
+        setGames(shaped);
+
+        const totals = shaped.reduce((a,g)=>({
+          games_count: a.games_count+1,
+          achievements_unlocked: a.achievements_unlocked + (g.achievementsDone||0),
+          achievements_total:    a.achievements_total    + (g.achievementsTotal||0),
+          playtime_total:        a.playtime_total        + (g.playtime||0)
+        }), { games_count:0, achievements_unlocked:0, achievements_total:0, playtime_total:0 });
+        const completion = totals.achievements_total ? totals.achievements_unlocked / totals.achievements_total : 0;
+
+        // fetch Steam persona + avatar
+        let persona = null, avatarfull = null;
+        try {
+          const { data: p } = await supabase.functions.invoke(FUNCTION_SLUG, {
+            body: { endpoint: 'player', steamid: steamId }
+          });
+          persona    = p?.personaname || null;
+          avatarfull = p?.avatarfull || p?.avatarmedium || p?.avatar || null;
+        } catch {}
+
+        const { data:{ user } } = await supabase.auth.getUser();
+        const username   = persona || user?.user_metadata?.username || user?.email || 'Player';
+        const avatar_url = avatarfull || user?.user_metadata?.avatar_url || null;
+
+        if (user) {
+          await supabase.from('player_stats').upsert({
+            user_id: user.id,
+            username,
+            steamid: steamId,
+            avatar_url,
+            games_count: totals.games_count,
+            achievements_unlocked: totals.achievements_unlocked,
+            achievements_total: totals.achievements_total,
+            completion,
+            playtime_total: totals.playtime_total,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'user_id' });
+        }
       }catch(e){
         console.error(e);
         toast({title:'Fetch failed',description:String(e.message||e)});
@@ -168,12 +206,11 @@ export default function Games(){
     })();
   },[steamId,toast]);
 
-  // Launch Steam OpenID
   function startSteamLogin(){
     const base=functionsBase();
     const state=crypto.randomUUID();
     sessionStorage.setItem('steam_state',state);
-    const redirect=window.location.origin; // bare origin avoids realm mismatch
+    const redirect=window.location.origin;
     const url=`${base}/${AUTH_SLUG}?action=start&redirect_uri=${encodeURIComponent(redirect)}&state=${encodeURIComponent(state)}`;
     window.location.href=url;
   }
@@ -203,7 +240,7 @@ export default function Games(){
     );
   }
 
-  const handleGameClick = g => { /* drill-in later */ };
+  const handleGameClick = () => {};
 
   return (
     <div className="space-y-8">
@@ -246,7 +283,7 @@ export default function Games(){
               initial="hidden"
               animate="visible"
               key={game.id}
-              onClick={()=>handleGameClick(game)}
+              onClick={handleGameClick}
               className="glass-effect rounded-xl overflow-hidden group cursor-pointer transition-all duration-300 hover:ring-2 hover:ring-blue-500 hover:bg-white/10"
             >
               <div className="relative h-48">

@@ -1,76 +1,159 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { BarChart3, Filter, Trophy, Star, Zap, Target } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import LeaderboardTable from '@/components/LeaderboardTable';
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
-const Leaderboard = () => {
-  const [selectedMetric, setSelectedMetric] = useState('gamerscore');
-  const [selectedPlatform, setSelectedPlatform] = useState('all');
-  const [selectedTimeframe, setSelectedTimeframe] = useState('all-time');
+// Expected table: player_stats
+// Columns: user_id, username, avatar_url, steamid, games_count,
+// achievements_unlocked, achievements_total, completion,
+// playtime_total (minutes), updated_at
 
-  const metrics = [
-    { id: 'gamerscore', label: 'Gamerscore', icon: Star, color: 'text-green-400' },
-    { id: 'achievements', label: 'Achievements', icon: Trophy, color: 'text-blue-400' },
-    { id: 'rare', label: 'Rare Count', icon: Zap, color: 'text-purple-400' },
-    { id: 'meta', label: 'Meta Trophies', icon: Target, color: 'text-orange-400' }
-  ];
+function rel(t) {
+  if (!t) return "—";
+  const d = new Date(t);
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const h = Math.floor(mins / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  return `${days}d ago`;
+}
+function hours(mins = 0) {
+  return (Math.round((mins / 60) * 10) / 10).toFixed(1);
+}
 
-  const platforms = ['all', 'steam', 'xbox', 'wow', 'riot'];
-  const timeframes = ['all-time', 'this-year', 'this-month', 'this-week'];
+export default function Leaderboards() {
+  const [metric, setMetric] = useState("achievements"); // "achievements" | "gamerscore"
+  const [timeframe, setTimeframe] = useState("all");    // "all" | "year" | "month" | "week"
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState([]);
 
-  const mockLeaderboardData = [
-    { id: 1, rank: 1, username: 'AchievementKing', avatar: 'Crown wearing gamer avatar', achievements: 3247, gamerscore: 89450, rare: 234, meta: 15, platforms: ['Steam', 'Xbox', 'WoW', 'Riot'], change: '+2' },
-    { id: 2, rank: 2, username: 'TrophyHunter', avatar: 'Trophy collector with medals', achievements: 2891, gamerscore: 76230, rare: 198, meta: 12, platforms: ['Steam', 'Xbox', 'WoW'], change: '-1' },
-    { id: 3, rank: 3, username: 'GamerSupreme', avatar: 'Elite gamer with headset', achievements: 2654, gamerscore: 71890, rare: 187, meta: 11, platforms: ['Steam', 'Xbox', 'Riot'], change: '+1' },
-    { id: 4, rank: 4, username: 'CompletionistPro', avatar: 'Perfectionist gamer avatar', achievements: 2456, gamerscore: 68340, rare: 176, meta: 10, platforms: ['Steam', 'WoW'], change: '0' },
-    { id: 5, rank: 5, username: 'RareCollector', avatar: 'Rare achievement specialist', achievements: 2234, gamerscore: 65120, rare: 165, meta: 9, platforms: ['Xbox', 'Riot'], change: '+3' },
-    { id: 6, rank: 6, username: 'NewChallenger', avatar: 'Up and coming gamer', achievements: 2100, gamerscore: 62000, rare: 150, meta: 8, platforms: ['Steam'], change: '+5' },
-    { id: 7, rank: 7, username: 'MMO-Master', avatar: 'Online game expert', achievements: 2050, gamerscore: 61500, rare: 145, meta: 8, platforms: ['WoW', 'Riot'], change: '-2' }
-  ];
+  // Which column to order by (you can expand later)
+  const orderCol = metric === "gamerscore" ? "achievements_unlocked" : "achievements_unlocked";
+
+  // lower bound ISO timestamp for timeframe
+  const since = useMemo(() => {
+    if (timeframe === "all") return null;
+    const d = new Date();
+    if (timeframe === "year")  d.setFullYear(d.getFullYear() - 1);
+    if (timeframe === "month") d.setMonth(d.getMonth() - 1);
+    if (timeframe === "week")  d.setDate(d.getDate() - 7);
+    return d.toISOString();
+  }, [timeframe]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+
+        let q = supabase
+          .from("player_stats")
+          .select(
+            "user_id, username, avatar_url, steamid, games_count, achievements_unlocked, achievements_total, completion, playtime_total, updated_at",
+            { count: "exact" }
+          )
+          .order(orderCol, { ascending: false })
+          .limit(100);
+
+        if (since) q = q.gte("updated_at", since);
+
+        const { data, error } = await q;
+        if (error) throw error;
+        setRows(data || []);
+      } catch (e) {
+        console.error(e);
+        setRows([]);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [orderCol, since]);
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-5xl font-bold animated-gradient-text mb-2">Global Leaderboards</h1>
-        <p className="text-gray-400 text-lg">Find out who is the ultimate gamer.</p>
+    <div className="space-y-6">
+      {/* Filters */}
+      <div className="glass-effect rounded-xl p-4 flex flex-wrap items-center gap-3">
+        <span className="opacity-80">Metric:</span>
+        <Tab v="achievements" cur={metric} set={setMetric} label="Achievements" />
+        <Tab v="gamerscore"   cur={metric} set={setMetric} label="Gamerscore" />
+        <div className="mx-4" />
+        <span className="opacity-80">Time:</span>
+        <Tab v="all"   cur={timeframe} set={setTimeframe} label="All Time" />
+        <Tab v="year"  cur={timeframe} set={setTimeframe} label="This Year" />
+        <Tab v="month" cur={timeframe} set={setTimeframe} label="This Month" />
+        <Tab v="week"  cur={timeframe} set={setTimeframe} label="This Week" />
       </div>
 
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="glass-effect rounded-xl p-4">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-4">
-          <div className="flex items-center gap-2">
-            <Filter className="h-5 w-5 text-blue-400" />
-            <span className="font-semibold">Metric:</span>
-            {metrics.map(metric => (
-              <Button key={metric.id} onClick={() => setSelectedMetric(metric.id)} variant={selectedMetric === metric.id ? "secondary" : "ghost"} size="sm" className={selectedMetric === metric.id ? 'bg-white/10' : ''}>
-                {metric.label}
-              </Button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-semibold">Platform:</span>
-            {platforms.map(platform => (
-              <Button key={platform} onClick={() => setSelectedPlatform(platform)} variant={selectedPlatform === platform ? "secondary" : "ghost"} size="sm" className={`capitalize ${selectedPlatform === platform ? 'bg-white/10' : ''}`}>
-                {platform}
-              </Button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-semibold">Time:</span>
-            {timeframes.map(timeframe => (
-              <Button key={timeframe} onClick={() => setSelectedTimeframe(timeframe)} variant={selectedTimeframe === timeframe ? "secondary" : "ghost"} size="sm" className={`capitalize ${selectedTimeframe === timeframe ? 'bg-white/10' : ''}`}>
-                {timeframe.replace('-', ' ')}
-              </Button>
-            ))}
-          </div>
-        </div>
-      </motion.div>
-
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-        <LeaderboardTable data={mockLeaderboardData} selectedMetric={selectedMetric} />
-      </motion.div>
+      {/* Table */}
+      <div className="glass-effect rounded-xl overflow-hidden">
+        <table className="w-full text-left">
+          <thead className="bg-white/5 text-sm">
+            <tr>
+              <Th>#</Th>
+              <Th>Player</Th>
+              <Th>Games</Th>
+              <Th>Unlocked</Th>
+              <Th>Total</Th>
+              <Th>Completion</Th>
+              <Th>Playtime (hrs)</Th>
+              <Th>Updated</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={8} className="p-6 text-center opacity-70">Loading…</td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td colSpan={8} className="p-6 text-center opacity-70">No players yet.</td></tr>
+            ) : (
+              rows.map((r, i) => (
+                <tr key={r.user_id} className="border-t border-white/5">
+                  <Td className="w-10">{i + 1}</Td>
+                  <Td>
+                    <div className="flex items-center gap-3">
+                      <Avatar url={r.avatar_url} name={r.username} />
+                      <div className="font-medium">{r.username || "Player"}</div>
+                    </div>
+                  </Td>
+                  <Td>{r.games_count ?? 0}</Td>
+                  <Td className="font-semibold">{r.achievements_unlocked ?? 0}</Td>
+                  <Td>{r.achievements_total ?? 0}</Td>
+                  <Td>{r.achievements_total ? Math.round((r.completion ?? 0) * 100) : 0}%</Td>
+                  <Td>{hours(r.playtime_total)}</Td>
+                  <Td className="opacity-70">{rel(r.updated_at)}</Td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
-};
+}
 
-export default Leaderboard;
+/* ---------- UI bits ---------- */
+function Avatar({ url, name }) {
+  if (url) {
+    return <img src={url} alt="" className="w-8 h-8 rounded-full object-cover" />;
+  }
+  const initial = (name && name.trim()[0]) ? name.trim()[0].toUpperCase() : "P";
+  return (
+    <div className="w-8 h-8 rounded-full bg-white/10 grid place-items-center text-xs">
+      {initial}
+    </div>
+  );
+}
+function Th({ children }) {
+  return <th className="px-4 py-3 font-semibold">{children}</th>;
+}
+function Td({ children, className = "" }) {
+  return <td className={`px-4 py-3 ${className}`}>{children}</td>;
+}
+function Tab({ v, cur, set, label }) {
+  const active = cur === v;
+  return (
+    <button
+      onClick={() => set(v)}
+      className={`px-3 py-1 rounded-md text-sm ${active ? "bg-white/10" : "hover:bg-white/5"}`}
+    >
+      {label}
+    </button>
+  );
+}

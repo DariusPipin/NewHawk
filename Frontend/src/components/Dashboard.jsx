@@ -1,127 +1,119 @@
-import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Trophy, Star, Zap, Target, TrendingUp, Activity } from 'lucide-react';
-import SummaryCards from '@/components/SummaryCards';
-import RarityHistogram from '@/components/RarityHistogram';
-import StreakWidget from '@/components/StreakWidget';
-import MetaBadgeGrid from '@/components/MetaBadgeGrid';
-import TimelineFeed from '@/components/TimelineFeed';
+import React, { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import RarityDistribution from "@/components/RarityDistribution";
 
-const Dashboard = ({ user, linkedAccounts }) => {
-  const [stats, setStats] = useState({
-    totalAchievements: 0,
-    totalGamerscore: 0,
-    rareAchievements: 0,
-    metaTrophies: 0,
-    currentStreak: 0,
-    platformBreakdown: {}
-  });
+const FUNCTION_SLUG = import.meta.env.VITE_FUNCTION_SLUG || "hyper-service";
 
-  useEffect(() => {
-    // Enhanced mock stats
-    const mockStats = {
-      totalAchievements: linkedAccounts.length * 250 + Math.floor(Math.random() * 500),
-      totalGamerscore: linkedAccounts.length * 35000 + Math.floor(Math.random() * 20000),
-      rareAchievements: linkedAccounts.length * 25 + Math.floor(Math.random() * 50),
-      metaTrophies: Math.floor(linkedAccounts.length * 3) + Math.floor(Math.random() * 7),
-      currentStreak: Math.floor(Math.random() * 50) + 5,
-      platformBreakdown: {}
-    };
+function pct(n, d) { return d ? Math.round((n * 100) / d) : 0; }
 
-    linkedAccounts.forEach(account => {
-      mockStats.platformBreakdown[account.platform] = {
-        achievements: Math.floor(Math.random() * 150) + 75,
-        gamerscore: Math.floor(Math.random() * 20000) + 10000
-      };
-    });
+function aggregate(games) {
+  const totalUnlocked = games.reduce((s,g)=>s+(g.achievements_unlocked||0),0);
+  const gamerscore = totalUnlocked; // Steam proxy
+  const unlocked = games.flatMap(g => (g.achievements_detail||[]).map(a=>a));
+  const buckets = { common:0, uncommon:0, rare:0, epic:0, legendary:0 };
+  for (const a of unlocked) {
+    const p = a.global_percent;
+    if (p == null) continue;
+    if (p > 50) buckets.common++;
+    else if (p > 25) buckets.uncommon++;
+    else if (p > 10) buckets.rare++;
+    else if (p > 5)  buckets.epic++;
+    else             buckets.legendary++;
+  }
+  const rareAchievements = buckets.rare + buckets.epic + buckets.legendary;
+  const metaTrophies = games.filter(g => g.achievements_total>0 && g.achievements_unlocked===g.achievements_total).length;
 
-    setStats(mockStats);
-  }, [linkedAccounts]);
+  // streak by unique days with unlocks
+  const days = new Set(unlocked.filter(a=>a.unlocktime).map(a => new Date(a.unlocktime*1000).toISOString().slice(0,10)));
+  const today = new Date(); today.setHours(0,0,0,0);
+  const iso = d => new Date(d).toISOString().slice(0,10);
+  let streak = 0;
+  for (let d=new Date(today); days.has(iso(d)); d.setDate(d.getDate()-1)) streak++;
 
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.08,
-        delayChildren: 0.2
-      }
+  const denom = Object.values(buckets).reduce((a,b)=>a+b,0);
+  const rarity = {
+    common: pct(buckets.common,denom),
+    uncommon: pct(buckets.uncommon,denom),
+    rare: pct(buckets.rare,denom),
+    epic: pct(buckets.epic,denom),
+    legendary: pct(buckets.legendary,denom),
+  };
+
+  return { totalUnlocked, gamerscore, rareAchievements, metaTrophies, rarity, streak };
+}
+
+export default function Dashboard() {
+  const [metrics,setMetrics] = useState(null);
+  const [name,setName] = useState("Player");
+
+  useEffect(()=>{(async()=>{
+    const { data:{ user } } = await supabase.auth.getUser();
+    setName(user?.user_metadata?.username || user?.email || "Player");
+    // find steamid
+    let steamid = user?.user_metadata?.steamid;
+    if (!steamid) {
+      const key = user ? `steamid:${user.id}` : `steamid:${localStorage.getItem('anon_id')||''}`;
+      steamid = localStorage.getItem(key) || "";
     }
-  };
+    if (!steamid) { setMetrics({totalUnlocked:0,gamerscore:0,rareAchievements:0,metaTrophies:0,rarity:{common:0,uncommon:0,rare:0,epic:0,legendary:0},streak:0}); return; }
 
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 100 } }
-  };
+    const { data, error } = await supabase.functions.invoke(FUNCTION_SLUG, {
+      body:{ endpoint:'games-achievements', steamid, playedOnly:true, max:200, concurrency:5, detail:true }
+    });
+    if (error) throw error;
+    const games = (data?.results||[]);
+    setMetrics(aggregate(games));
+  })().catch(console.error)},[]);
+
+  if (!metrics) return null;
 
   return (
-    <motion.div
-      className="space-y-8"
-      variants={containerVariants}
-      initial="hidden"
-      animate="visible"
-    >
-      <motion.div variants={itemVariants}>
-        <h1 className="text-5xl font-bold animated-gradient-text mb-2">
-          Welcome back, {user.displayName || user.username}!
-        </h1>
-        <p className="text-gray-400 text-lg">
-          Here's your aggregated gaming universe. Ready to conquer?
-        </p>
-      </motion.div>
-
-      <motion.div variants={itemVariants}>
-        <SummaryCards stats={stats} />
-      </motion.div>
-      
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
-        <motion.div variants={itemVariants} className="lg:col-span-3 space-y-8">
-          <RarityHistogram linkedAccounts={linkedAccounts} />
-          <TimelineFeed linkedAccounts={linkedAccounts} />
-        </motion.div>
-
-        <motion.div variants={itemVariants} className="lg:col-span-2 space-y-8">
-          <StreakWidget currentStreak={stats.currentStreak} />
-          <MetaBadgeGrid metaTrophies={stats.metaTrophies} />
-          
-          <motion.div variants={itemVariants} className="glass-effect rounded-xl p-6">
-            <h3 className="text-xl font-semibold mb-4 flex items-center">
-              <Activity className="h-5 w-5 mr-2 text-green-400" />
-              Global Standing
-            </h3>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Platforms</span>
-                <span className="font-semibold text-blue-400">{linkedAccounts.length} Connected</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Average Completion</span>
-                 <div className="flex items-center space-x-2">
-                   <div className="w-24 bg-gray-700 rounded-full h-2">
-                       <motion.div 
-                         className="bg-green-500 h-2 rounded-full" 
-                         initial={{ width: 0 }}
-                         animate={{ width: `${Math.floor(Math.random() * 30 + 60)}%`}}
-                         transition={{ duration: 1, delay: 0.5 }}
-                       />
-                   </div>
-                   <span className="font-semibold text-green-400">
-                     {Math.floor(Math.random() * 30 + 60)}%
-                   </span>
-                 </div>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Global Rank</span>
-                <span className="font-semibold text-purple-400">
-                  #{Math.floor(Math.random() * 10000 + 1000).toLocaleString()}
-                </span>
-              </div>
-            </div>
-          </motion.div>
-        </motion.div>
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-5xl font-bold animated-gradient-text">Welcome back, {name}!</h1>
+        <p className="text-gray-400 text-lg">Here's your aggregated gaming universe.</p>
       </div>
-    </motion.div>
-  );
-};
 
-export default Dashboard;
+      <div className="grid gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-4">
+        <Card title="Total Achievements" value={metrics.totalUnlocked}/>
+        <Card title="Total Gamerscore" value={metrics.gamerscore} accent="text-green-400"/>
+        <Card title="Rare Achievements" value={metrics.rareAchievements} accent="text-purple-300"/>
+        <Card title="Meta Trophies" value={metrics.metaTrophies} accent="text-orange-300"/>
+      </div>
+
+      <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+      <RarityDistribution rarity={metrics.rarity} />
+
+        <div className="glass-effect rounded-xl p-6 flex items-center justify-center">
+          <Ring value={metrics.streak}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Card({ title, value, accent }) {
+  return (
+    <div className="glass-effect rounded-xl p-6">
+      <div className="opacity-70 mb-2">{title}</div>
+      <div className={`text-5xl font-bold ${accent||"text-blue-300"}`}>{value}</div>
+    </div>
+  );
+}
+
+function Ring({ value }) {
+  const deg = Math.min(360, (value % 100) * 3.6);
+  return (
+    <div className="text-center">
+      <div
+        className="h-40 w-40 rounded-full mx-auto mb-3"
+        style={{ background: `conic-gradient(#f97316 ${deg}deg, #1f2937 0)` }}
+      >
+        <div className="h-36 w-36 rounded-full bg-[#111827] m-2 flex items-center justify-center text-4xl font-bold">
+          {value}
+        </div>
+      </div>
+      <div className="opacity-70">day streak</div>
+    </div>
+  );
+}

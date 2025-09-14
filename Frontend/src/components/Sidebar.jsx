@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Trophy, Gamepad2, Users, BarChart3, Gift, Link, Settings, LogOut } from 'lucide-react';
+import { Trophy, Gamepad2, Users, BarChart3, Gift, Link, Settings, LogOut, Star, Award } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const navItems = [
@@ -8,7 +8,16 @@ const navItems = [
     { id: 'games', label: 'Games', icon: Gamepad2 },
     { id: 'compare', label: 'Compare', icon: Users },
     { id: 'leaderboard', label: 'Leaderboard', icon: BarChart3 },
-    { id: 'wrapped', label: 'Wrapped', icon: Gift },
+    {
+  id: 'achievements',
+  label: 'Achievements',
+  icon: Award
+},
+    {
+  id: 'custom-achievements',
+  label: 'Custom',
+  icon: Star
+}
 ];
 
 const actionItems = [
@@ -33,7 +42,7 @@ const Sidebar = ({ currentPage, setCurrentPage, user }) => {
             <div className="flex items-center space-x-3 mb-10">
                 <Trophy className="h-10 w-10 animated-gradient-text" />
                 <span className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                    OmniGamer
+                    UGAB
                 </span>
             </div>
             
